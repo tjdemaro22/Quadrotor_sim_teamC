@@ -47,7 +47,7 @@ B = eval(Jb_eval)
 
 rank(ctrb(A,B))
 
-function zdot = f(z,u,r,n)
+function zdot = f(z,u)
     Rz = [cos(q(6)) -sin(q(6)) 0; sin(q(6)) cos(q(6)) 0; 0 0 1]; % R3
     Ry = [cos(q(5)) 0 sin(q(5)); 0 1 0; -sin(q(5)) 0 cos(q(5))]; %R2
     Rx = [1 0 0; 0 cos(q(4)) -sin(q(4)); 0 sin(q(4)) cos(q(4))]; %R1
