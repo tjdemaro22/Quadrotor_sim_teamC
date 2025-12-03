@@ -14,7 +14,7 @@ classdef simulator < handle
 
     properties(Access=public)
         animation_axis;
-        airspace_box_length = 4;
+        airspace_box_length = 10;
         axis_font_size = 14;
     end
 
@@ -81,7 +81,7 @@ classdef simulator < handle
 
             dist = obj.uav.disturbance(iscaptured);
             [t, z] = obj.quadrotor.solve(tspan, z0, u, dist);
-            d = [dist.r(t), dist.n(t)];
+            d = [obj.uav.eval(dist.r, t,z), obj.uav.eval(dist.n,t,z)];
             y = obj.uav.location(iscaptured, t, z);
         end
 
@@ -107,6 +107,9 @@ classdef simulator < handle
             obj.buildvisuals(ax);
             tic;
             for k=1:length(t)
+                if ~isvalid(ax)
+                    return
+                end
                 obj.show(z(k,:), y(k,:));
                 drawnow();
                 %pause(t(k)-toc);
