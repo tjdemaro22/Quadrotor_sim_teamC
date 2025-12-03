@@ -7,6 +7,9 @@
 # MATLAB
 *.asv
 
+#HTML
+*.html
+
 # User-specific files
 *.rsuser
 *.suo
