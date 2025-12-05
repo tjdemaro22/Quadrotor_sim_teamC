@@ -154,7 +154,7 @@ def main():
     print("\nConfiguring simulation...")
     
     sim = Simulator(quad, ctrl, intruder)
-    sim.simtime = (0, 20)
+    sim.simtime = (0, 10)
     sim.timestep = 0.01
     sim.epsilon = 0.1  # Capture distance
     

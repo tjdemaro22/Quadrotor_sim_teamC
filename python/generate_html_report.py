@@ -47,19 +47,44 @@ def generate_html_report(
     if output_path is None:
         output_path = os.path.join(os.path.dirname(__file__), 'simulation_report.html')
     
+    # Convert numpy arrays to lists for Plotly compatibility
+    t_list = t.tolist() if isinstance(t, np.ndarray) else list(t)
+    
+    # Quadrotor position data
+    quad_x = z[:, 0].tolist() if isinstance(z, np.ndarray) else [zi[0] for zi in z]
+    quad_y = z[:, 1].tolist() if isinstance(z, np.ndarray) else [zi[1] for zi in z]
+    quad_z = z[:, 2].tolist() if isinstance(z, np.ndarray) else [zi[2] for zi in z]
+    
+    # UAV position data
+    uav_x = y[:, 0].tolist() if isinstance(y, np.ndarray) else [yi[0] for yi in y]
+    uav_y = y[:, 1].tolist() if isinstance(y, np.ndarray) else [yi[1] for yi in y]
+    uav_z = y[:, 2].tolist() if isinstance(y, np.ndarray) else [yi[2] for yi in y]
+    
+    # Control input data
+    u1 = u[:, 0].tolist() if isinstance(u, np.ndarray) else [ui[0] for ui in u]
+    u2 = u[:, 1].tolist() if isinstance(u, np.ndarray) else [ui[1] for ui in u]
+    u3 = u[:, 2].tolist() if isinstance(u, np.ndarray) else [ui[2] for ui in u]
+    u4 = u[:, 3].tolist() if isinstance(u, np.ndarray) else [ui[3] for ui in u]
+    
     # Calculate axis limits with padding
     x_range = [sim_bounds[0][0] - axis_padding, sim_bounds[0][1] + axis_padding]
     y_range = [sim_bounds[1][0] - axis_padding, sim_bounds[1][1] + axis_padding]
     z_range = [sim_bounds[2][0], sim_bounds[2][1] + axis_padding]  # Only pad top of z
     
-    # Calculate some statistics
+    # Calculate distance from quadrotor to UAV (2-norm)
     distances = np.linalg.norm(z[:, :3] - y, axis=1)
-    min_dist = np.min(distances)
-    min_dist_idx = np.argmin(distances)
-    capture_time = t[min_dist_idx] if min_dist < 0.1 else None
+    distances_list = distances.tolist()
+    min_dist = float(np.min(distances))
+    min_dist_idx = int(np.argmin(distances))
+    capture_time = float(t[min_dist_idx]) if min_dist < 0.1 else None
+    
+    # Calculate component-wise distances (x, y, z separately)
+    dist_x = (z[:, 0] - y[:, 0]).tolist()  # quadrotor_x - uav_x
+    dist_y = (z[:, 1] - y[:, 1]).tolist()  # quadrotor_y - uav_y
+    dist_z = (z[:, 2] - y[:, 2]).tolist()  # quadrotor_z - uav_z
     
     # =========================================================================
-    # Create Animated 3D Plot (looping simulation playback)
+    # Create Animated 3D Plot (user-controlled playback)
     # =========================================================================
     
     # Subsample for animation performance (aim for ~200 frames)
@@ -71,80 +96,95 @@ def generate_html_report(
     
     # Quadrotor trail (will be updated in frames)
     fig_anim.add_trace(go.Scatter3d(
-        x=[z[0, 0]], y=[z[0, 1]], z=[z[0, 2]],
+        x=quad_x[:1], y=quad_y[:1], z=quad_z[:1],
         mode='lines',
         name='Quadrotor Trail',
-        line=dict(color='#1f77b4', width=3),
-        showlegend=True
+        line=dict(color='#1f77b4', width=4),
+        showlegend=False
     ))
     
     # Quadrotor current position marker
     fig_anim.add_trace(go.Scatter3d(
-        x=[z[0, 0]], y=[z[0, 1]], z=[z[0, 2]],
+        x=[quad_x[0]], y=[quad_y[0]], z=[quad_z[0]],
         mode='markers',
         name='Quadrotor',
-        marker=dict(color='#1f77b4', size=8, symbol='diamond'),
-        showlegend=True
+        marker=dict(color='#1f77b4', size=10, symbol='diamond'),
+        showlegend=False
     ))
     
     # UAV trail (will be updated in frames)
     fig_anim.add_trace(go.Scatter3d(
-        x=[y[0, 0]], y=[y[0, 1]], z=[y[0, 2]],
+        x=uav_x[:1], y=uav_y[:1], z=uav_z[:1],
         mode='lines',
         name='Target Trail',
-        line=dict(color='#d62728', width=3),
-        showlegend=True
+        line=dict(color='#d62728', width=4),
+        showlegend=False
     ))
     
     # UAV current position marker
     fig_anim.add_trace(go.Scatter3d(
-        x=[y[0, 0]], y=[y[0, 1]], z=[y[0, 2]],
+        x=[uav_x[0]], y=[uav_y[0]], z=[uav_z[0]],
         mode='markers',
         name='Target UAV',
-        marker=dict(color='#d62728', size=10, symbol='circle'),
-        showlegend=True
+        marker=dict(color='#d62728', size=12, symbol='circle'),
+        showlegend=False
     ))
     
     # Create animation frames
     frames = []
     for i, idx in enumerate(frame_indices):
+        idx = int(idx)
         frame = go.Frame(
             data=[
                 # Quadrotor trail
                 go.Scatter3d(
-                    x=z[:idx+1, 0], y=z[:idx+1, 1], z=z[:idx+1, 2],
+                    x=quad_x[:idx+1], y=quad_y[:idx+1], z=quad_z[:idx+1],
                     mode='lines',
-                    line=dict(color='#1f77b4', width=3)
+                    line=dict(color='#1f77b4', width=4)
                 ),
                 # Quadrotor position
                 go.Scatter3d(
-                    x=[z[idx, 0]], y=[z[idx, 1]], z=[z[idx, 2]],
+                    x=[quad_x[idx]], y=[quad_y[idx]], z=[quad_z[idx]],
                     mode='markers',
-                    marker=dict(color='#1f77b4', size=8, symbol='diamond')
+                    marker=dict(color='#1f77b4', size=10, symbol='diamond')
                 ),
                 # UAV trail
                 go.Scatter3d(
-                    x=y[:idx+1, 0], y=y[:idx+1, 1], z=y[:idx+1, 2],
+                    x=uav_x[:idx+1], y=uav_y[:idx+1], z=uav_z[:idx+1],
                     mode='lines',
-                    line=dict(color='#d62728', width=3)
+                    line=dict(color='#d62728', width=4)
                 ),
                 # UAV position
                 go.Scatter3d(
-                    x=[y[idx, 0]], y=[y[idx, 1]], z=[y[idx, 2]],
+                    x=[uav_x[idx]], y=[uav_y[idx]], z=[uav_z[idx]],
                     mode='markers',
-                    marker=dict(color='#d62728', size=10, symbol='circle')
+                    marker=dict(color='#d62728', size=12, symbol='circle')
                 )
             ],
-            name=f't={t[idx]:.2f}s',
+            name=f'frame{i}',
             traces=[0, 1, 2, 3]
         )
         frames.append(frame)
     
     fig_anim.frames = frames
     
-    # Add play/pause buttons and slider
+    # Create slider steps
+    slider_steps = []
+    for i, idx in enumerate(frame_indices):
+        step = dict(
+            args=[[f'frame{i}'], dict(
+                frame=dict(duration=0, redraw=True),
+                mode='immediate',
+                transition=dict(duration=0)
+            )],
+            label=f'{t[idx]:.1f}',
+            method='animate'
+        )
+        slider_steps.append(step)
+    
+    # Add play/pause buttons and slider - NO AUTO-LOOP, NO LEGEND
     fig_anim.update_layout(
-        title=dict(text='Simulation Playback (Auto-loops)', font=dict(size=16)),
+        title=dict(text='Simulation Playback', font=dict(size=16)),
         scene=dict(
             xaxis=dict(title='X (m)', range=x_range),
             yaxis=dict(title='Y (m)', range=y_range),
@@ -156,10 +196,11 @@ def generate_html_report(
                 eye=dict(x=1.5, y=1.5, z=1.0)
             )
         ),
+        showlegend=False,
         updatemenus=[
             dict(
                 type='buttons',
-                showactive=False,
+                showactive=True,
                 y=0,
                 x=0.1,
                 xanchor='right',
@@ -193,7 +234,7 @@ def generate_html_report(
             xanchor='left',
             currentvalue=dict(
                 font=dict(size=12),
-                prefix='Time: ',
+                prefix='Time (s): ',
                 visible=True,
                 xanchor='right'
             ),
@@ -202,90 +243,85 @@ def generate_html_report(
             len=0.9,
             x=0.1,
             y=0,
-            steps=[
-                dict(
-                    args=[[f't={t[idx]:.2f}s'], dict(
-                        frame=dict(duration=0, redraw=True),
-                        mode='immediate',
-                        transition=dict(duration=0)
-                    )],
-                    label=f'{t[idx]:.1f}s',
-                    method='animate'
-                )
-                for idx in frame_indices[::max(1, len(frame_indices)//20)]  # ~20 slider steps
-            ]
+            steps=slider_steps[::max(1, len(slider_steps)//25)]  # ~25 slider steps
         )],
         width=550,
         height=550,
-        margin=dict(l=0, r=0, b=60, t=50),
-        legend=dict(x=0.02, y=0.98, bgcolor='rgba(255,255,255,0.8)', font=dict(size=10))
+        margin=dict(l=0, r=0, b=60, t=50)
     )
     
     # =========================================================================
-    # Create Static 3D Trajectory Plot
+    # Create Static 3D Trajectory Plot (NO LEGEND)
     # =========================================================================
     fig_3d = go.Figure()
     
     # Quadrotor trajectory (blue)
     fig_3d.add_trace(go.Scatter3d(
-        x=z[:, 0], y=z[:, 1], z=z[:, 2],
+        x=quad_x, y=quad_y, z=quad_z,
         mode='lines',
         name='Quadrotor Trajectory',
-        line=dict(color='#1f77b4', width=4),
-        hovertemplate='<b>Quadrotor</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>'
+        line=dict(color='#1f77b4', width=5),
+        hovertemplate='<b>Quadrotor</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>',
+        showlegend=False
     ))
     
     # Quadrotor start/end markers
     fig_3d.add_trace(go.Scatter3d(
-        x=[z[0, 0]], y=[z[0, 1]], z=[z[0, 2]],
+        x=[quad_x[0]], y=[quad_y[0]], z=[quad_z[0]],
         mode='markers',
         name='Quad Start',
-        marker=dict(color='#1f77b4', size=10, symbol='circle'),
-        hovertemplate='<b>Quad Start</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>'
+        marker=dict(color='#1f77b4', size=12, symbol='circle'),
+        hovertemplate='<b>Quad Start</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>',
+        showlegend=False
     ))
     
     fig_3d.add_trace(go.Scatter3d(
-        x=[z[-1, 0]], y=[z[-1, 1]], z=[z[-1, 2]],
+        x=[quad_x[-1]], y=[quad_y[-1]], z=[quad_z[-1]],
         mode='markers',
         name='Quad End',
-        marker=dict(color='#1f77b4', size=10, symbol='square'),
-        hovertemplate='<b>Quad End</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>'
+        marker=dict(color='#1f77b4', size=12, symbol='square'),
+        hovertemplate='<b>Quad End</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>',
+        showlegend=False
     ))
     
     # UAV trajectory (red)
     fig_3d.add_trace(go.Scatter3d(
-        x=y[:, 0], y=y[:, 1], z=y[:, 2],
+        x=uav_x, y=uav_y, z=uav_z,
         mode='lines',
         name='Target UAV Trajectory',
-        line=dict(color='#d62728', width=4),
-        hovertemplate='<b>Target UAV</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>'
+        line=dict(color='#d62728', width=5),
+        hovertemplate='<b>Target UAV</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>',
+        showlegend=False
     ))
     
     # UAV start/end markers
     fig_3d.add_trace(go.Scatter3d(
-        x=[y[0, 0]], y=[y[0, 1]], z=[y[0, 2]],
+        x=[uav_x[0]], y=[uav_y[0]], z=[uav_z[0]],
         mode='markers',
         name='UAV Start',
-        marker=dict(color='#d62728', size=10, symbol='circle'),
-        hovertemplate='<b>UAV Start</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>'
+        marker=dict(color='#d62728', size=12, symbol='circle'),
+        hovertemplate='<b>UAV Start</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>',
+        showlegend=False
     ))
     
     fig_3d.add_trace(go.Scatter3d(
-        x=[y[-1, 0]], y=[y[-1, 1]], z=[y[-1, 2]],
+        x=[uav_x[-1]], y=[uav_y[-1]], z=[uav_z[-1]],
         mode='markers',
         name='UAV End',
-        marker=dict(color='#d62728', size=10, symbol='square'),
-        hovertemplate='<b>UAV End</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>'
+        marker=dict(color='#d62728', size=12, symbol='square'),
+        hovertemplate='<b>UAV End</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>',
+        showlegend=False
     ))
     
     # Mark capture point if applicable
     if capture_time is not None:
         fig_3d.add_trace(go.Scatter3d(
-            x=[z[min_dist_idx, 0]], y=[z[min_dist_idx, 1]], z=[z[min_dist_idx, 2]],
+            x=[quad_x[min_dist_idx]], y=[quad_y[min_dist_idx]], z=[quad_z[min_dist_idx]],
             mode='markers',
             name='Capture Point',
             marker=dict(color='#2ca02c', size=15, symbol='diamond'),
-            hovertemplate=f'<b>Capture!</b><br>t: {capture_time:.2f}s<br>x: %{{x:.2f}}<br>y: %{{y:.2f}}<br>z: %{{z:.2f}}<extra></extra>'
+            hovertemplate=f'<b>Capture!</b><br>t: {capture_time:.2f}s<br>x: %{{x:.2f}}<br>y: %{{y:.2f}}<br>z: %{{z:.2f}}<extra></extra>',
+            showlegend=False
         ))
     
     fig_3d.update_layout(
@@ -301,10 +337,10 @@ def generate_html_report(
                 eye=dict(x=1.5, y=1.5, z=1.0)
             )
         ),
+        showlegend=False,
         width=550,
         height=550,
-        margin=dict(l=0, r=0, b=0, t=50),
-        legend=dict(x=0.02, y=0.98, bgcolor='rgba(255,255,255,0.8)', font=dict(size=10))
+        margin=dict(l=0, r=0, b=0, t=50)
     )
     
     # =========================================================================
@@ -318,24 +354,33 @@ def generate_html_report(
     )
     
     # Position
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 0], name='x', line=dict(color='#1f77b4')), row=1, col=1)
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 1], name='y', line=dict(color='#ff7f0e')), row=1, col=1)
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 2], name='z', line=dict(color='#2ca02c')), row=1, col=1)
+    fig_states.add_trace(go.Scatter(x=t_list, y=quad_x, name='x', line=dict(color='#1f77b4')), row=1, col=1)
+    fig_states.add_trace(go.Scatter(x=t_list, y=quad_y, name='y', line=dict(color='#ff7f0e')), row=1, col=1)
+    fig_states.add_trace(go.Scatter(x=t_list, y=quad_z, name='z', line=dict(color='#2ca02c')), row=1, col=1)
     
     # Velocity
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 6], name='vx', line=dict(color='#1f77b4'), showlegend=False), row=1, col=2)
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 7], name='vy', line=dict(color='#ff7f0e'), showlegend=False), row=1, col=2)
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 8], name='vz', line=dict(color='#2ca02c'), showlegend=False), row=1, col=2)
+    vx = z[:, 6].tolist()
+    vy = z[:, 7].tolist()
+    vz = z[:, 8].tolist()
+    fig_states.add_trace(go.Scatter(x=t_list, y=vx, name='vx', line=dict(color='#1f77b4'), showlegend=False), row=1, col=2)
+    fig_states.add_trace(go.Scatter(x=t_list, y=vy, name='vy', line=dict(color='#ff7f0e'), showlegend=False), row=1, col=2)
+    fig_states.add_trace(go.Scatter(x=t_list, y=vz, name='vz', line=dict(color='#2ca02c'), showlegend=False), row=1, col=2)
     
     # Orientation (convert to degrees)
-    fig_states.add_trace(go.Scatter(x=t, y=np.rad2deg(z[:, 3]), name='φ (roll)', line=dict(color='#d62728')), row=2, col=1)
-    fig_states.add_trace(go.Scatter(x=t, y=np.rad2deg(z[:, 4]), name='θ (pitch)', line=dict(color='#9467bd')), row=2, col=1)
-    fig_states.add_trace(go.Scatter(x=t, y=np.rad2deg(z[:, 5]), name='ψ (yaw)', line=dict(color='#8c564b')), row=2, col=1)
+    phi = np.rad2deg(z[:, 3]).tolist()
+    theta = np.rad2deg(z[:, 4]).tolist()
+    psi = np.rad2deg(z[:, 5]).tolist()
+    fig_states.add_trace(go.Scatter(x=t_list, y=phi, name='φ (roll)', line=dict(color='#d62728')), row=2, col=1)
+    fig_states.add_trace(go.Scatter(x=t_list, y=theta, name='θ (pitch)', line=dict(color='#9467bd')), row=2, col=1)
+    fig_states.add_trace(go.Scatter(x=t_list, y=psi, name='ψ (yaw)', line=dict(color='#8c564b')), row=2, col=1)
     
     # Angular velocity
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 9], name='ω1', line=dict(color='#d62728'), showlegend=False), row=2, col=2)
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 10], name='ω2', line=dict(color='#9467bd'), showlegend=False), row=2, col=2)
-    fig_states.add_trace(go.Scatter(x=t, y=z[:, 11], name='ω3', line=dict(color='#8c564b'), showlegend=False), row=2, col=2)
+    w1 = z[:, 9].tolist()
+    w2 = z[:, 10].tolist()
+    w3 = z[:, 11].tolist()
+    fig_states.add_trace(go.Scatter(x=t_list, y=w1, name='ω1', line=dict(color='#d62728'), showlegend=False), row=2, col=2)
+    fig_states.add_trace(go.Scatter(x=t_list, y=w2, name='ω2', line=dict(color='#9467bd'), showlegend=False), row=2, col=2)
+    fig_states.add_trace(go.Scatter(x=t_list, y=w3, name='ω3', line=dict(color='#8c564b'), showlegend=False), row=2, col=2)
     
     fig_states.update_xaxes(title_text='Time (s)', row=2, col=1)
     fig_states.update_xaxes(title_text='Time (s)', row=2, col=2)
@@ -353,14 +398,14 @@ def generate_html_report(
     )
     
     # =========================================================================
-    # Create Control Input Plot
+    # Create Control Input (Rotor Thrusts) Plot
     # =========================================================================
     fig_control = go.Figure()
     
-    fig_control.add_trace(go.Scatter(x=t, y=u[:, 0], name='u1 (Front)', line=dict(color='#1f77b4')))
-    fig_control.add_trace(go.Scatter(x=t, y=u[:, 1], name='u2 (Left)', line=dict(color='#ff7f0e')))
-    fig_control.add_trace(go.Scatter(x=t, y=u[:, 2], name='u3 (Back)', line=dict(color='#2ca02c')))
-    fig_control.add_trace(go.Scatter(x=t, y=u[:, 3], name='u4 (Right)', line=dict(color='#d62728')))
+    fig_control.add_trace(go.Scatter(x=t_list, y=u1, name='u1 (Front)', line=dict(color='#1f77b4', width=2)))
+    fig_control.add_trace(go.Scatter(x=t_list, y=u2, name='u2 (Left)', line=dict(color='#ff7f0e', width=2)))
+    fig_control.add_trace(go.Scatter(x=t_list, y=u3, name='u3 (Back)', line=dict(color='#2ca02c', width=2)))
+    fig_control.add_trace(go.Scatter(x=t_list, y=u4, name='u4 (Right)', line=dict(color='#d62728', width=2)))
     
     fig_control.update_layout(
         title=dict(text='Control Inputs (Rotor Thrusts)', font=dict(size=20)),
@@ -372,52 +417,12 @@ def generate_html_report(
     )
     
     # =========================================================================
-    # Create Motor Torques Plot
-    # =========================================================================
-    # Each motor produces a reaction torque proportional to its thrust: τ = σ × u
-    # This is the torque applied to the airframe due to motor spinning
-    sigma = quadrotor.sigma
-    motor_torques = u * sigma  # (n_times, 4) - torque from each motor
-    
-    fig_motor_torques = go.Figure()
-    
-    fig_motor_torques.add_trace(go.Scatter(
-        x=t, y=motor_torques[:, 0], 
-        name='τ₁ (Front)', 
-        line=dict(color='#1f77b4', width=2)
-    ))
-    fig_motor_torques.add_trace(go.Scatter(
-        x=t, y=motor_torques[:, 1], 
-        name='τ₂ (Left)', 
-        line=dict(color='#ff7f0e', width=2)
-    ))
-    fig_motor_torques.add_trace(go.Scatter(
-        x=t, y=motor_torques[:, 2], 
-        name='τ₃ (Back)', 
-        line=dict(color='#2ca02c', width=2)
-    ))
-    fig_motor_torques.add_trace(go.Scatter(
-        x=t, y=motor_torques[:, 3], 
-        name='τ₄ (Right)', 
-        line=dict(color='#d62728', width=2)
-    ))
-    
-    fig_motor_torques.update_layout(
-        title=dict(text='Motor Reaction Torques (τ = σ × u)', font=dict(size=20)),
-        xaxis_title='Time (s)',
-        yaxis_title='Torque (N·m)',
-        height=400,
-        width=1100,
-        legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center')
-    )
-    
-    # =========================================================================
-    # Create Distance Plot
+    # Create Distance Plot (total distance to UAV)
     # =========================================================================
     fig_distance = go.Figure()
     
     fig_distance.add_trace(go.Scatter(
-        x=t, y=distances,
+        x=t_list, y=distances_list,
         name='Distance to Target',
         line=dict(color='#17becf', width=2),
         fill='tozeroy',
@@ -441,6 +446,54 @@ def generate_html_report(
     )
     
     # =========================================================================
+    # Create Position Comparison Plot (Quadrotor vs Target in x, y, z)
+    # =========================================================================
+    fig_dist_components = go.Figure()
+    
+    # Quadrotor positions (solid lines)
+    fig_dist_components.add_trace(go.Scatter(
+        x=t_list, y=quad_x,
+        name='Quadrotor X',
+        line=dict(color='#1f77b4', width=2, dash='solid')
+    ))
+    fig_dist_components.add_trace(go.Scatter(
+        x=t_list, y=quad_y,
+        name='Quadrotor Y',
+        line=dict(color='#ff7f0e', width=2, dash='solid')
+    ))
+    fig_dist_components.add_trace(go.Scatter(
+        x=t_list, y=quad_z,
+        name='Quadrotor Z',
+        line=dict(color='#2ca02c', width=2, dash='solid')
+    ))
+    
+    # Target UAV positions (dashed lines, same colors)
+    fig_dist_components.add_trace(go.Scatter(
+        x=t_list, y=uav_x,
+        name='Target X',
+        line=dict(color='#1f77b4', width=2, dash='dash')
+    ))
+    fig_dist_components.add_trace(go.Scatter(
+        x=t_list, y=uav_y,
+        name='Target Y',
+        line=dict(color='#ff7f0e', width=2, dash='dash')
+    ))
+    fig_dist_components.add_trace(go.Scatter(
+        x=t_list, y=uav_z,
+        name='Target Z',
+        line=dict(color='#2ca02c', width=2, dash='dash')
+    ))
+    
+    fig_dist_components.update_layout(
+        title=dict(text='Position Comparison: Quadrotor (solid) vs Target (dashed)', font=dict(size=20)),
+        xaxis_title='Time (s)',
+        yaxis_title='Position (m)',
+        height=400,
+        width=1100,
+        legend=dict(orientation='h', y=1.02, x=0.5, xanchor='center')
+    )
+    
+    # =========================================================================
     # Generate HTML
     # =========================================================================
     
@@ -449,8 +502,8 @@ def generate_html_report(
     plot_3d_html = fig_3d.to_html(full_html=False, include_plotlyjs=False)
     plot_states_html = fig_states.to_html(full_html=False, include_plotlyjs=False)
     plot_control_html = fig_control.to_html(full_html=False, include_plotlyjs=False)
-    plot_motor_torques_html = fig_motor_torques.to_html(full_html=False, include_plotlyjs=False)
     plot_distance_html = fig_distance.to_html(full_html=False, include_plotlyjs=False)
+    plot_dist_components_html = fig_dist_components.to_html(full_html=False, include_plotlyjs=False)
     
     # Generate timestamp
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -620,6 +673,7 @@ def generate_html_report(
         .section-icon.blue {{ background: rgba(88, 166, 255, 0.2); }}
         .section-icon.green {{ background: rgba(63, 185, 80, 0.2); }}
         .section-icon.purple {{ background: rgba(163, 113, 247, 0.2); }}
+        .section-icon.orange {{ background: rgba(255, 127, 14, 0.2); }}
         
         .section-content {{
             padding: 1.5rem;
@@ -721,11 +775,11 @@ def generate_html_report(
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-label">Simulation Duration</div>
-                <div class="stat-value blue">{t[-1]:.1f} s</div>
+                <div class="stat-value blue">{t_list[-1]:.1f} s</div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Time Steps</div>
-                <div class="stat-value purple">{len(t)}</div>
+                <div class="stat-value purple">{len(t_list)}</div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Minimum Distance</div>
@@ -756,6 +810,8 @@ def generate_html_report(
                     Axis bounds: X [{x_range[0]}, {x_range[1]}] m | Y [{y_range[0]}, {y_range[1]}] m | Z [{z_range[0]}, {z_range[1]}] m
                     <br>
                     <span style="color: #1f77b4;">●</span> Quadrotor (Blue) | <span style="color: #d62728;">●</span> Target UAV (Red)
+                    <br>
+                    <em>Tip: Pause the animation to rotate/zoom the 3D view</em>
                 </div>
             </div>
         </div>
@@ -764,11 +820,24 @@ def generate_html_report(
         <div class="section">
             <div class="section-header">
                 <div class="section-icon green">📏</div>
-                <h2>Distance to Target</h2>
+                <h2>Distance to Target UAV</h2>
             </div>
             <div class="section-content">
                 <div class="plot-container">
                     {plot_distance_html}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Position Comparison Plot -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon orange">📐</div>
+                <h2>Position Comparison (Quadrotor vs Target)</h2>
+            </div>
+            <div class="section-content">
+                <div class="plot-container">
+                    {plot_dist_components_html}
                 </div>
             </div>
         </div>
@@ -790,27 +859,11 @@ def generate_html_report(
         <div class="section">
             <div class="section-header">
                 <div class="section-icon blue">🎮</div>
-                <h2>Control Inputs</h2>
+                <h2>Control Inputs (Rotor Thrusts)</h2>
             </div>
             <div class="section-content">
                 <div class="plot-container">
                     {plot_control_html}
-                </div>
-            </div>
-        </div>
-        
-        <!-- Motor Torques -->
-        <div class="section">
-            <div class="section-header">
-                <div class="section-icon purple">🔄</div>
-                <h2>Motor Reaction Torques</h2>
-            </div>
-            <div class="section-content">
-                <div class="plot-container">
-                    {plot_motor_torques_html}
-                </div>
-                <div class="axis-info">
-                    Each motor produces a reaction torque τ = σ × u (thrust-to-torque ratio σ = {quadrotor.sigma})
                 </div>
             </div>
         </div>
@@ -849,7 +902,7 @@ def generate_html_report(
                     </div>
                     <div class="param-item">
                         <div class="param-name">Time Step</div>
-                        <div class="param-value">{t[1]-t[0]:.3f} s</div>
+                        <div class="param-value">{t_list[1]-t_list[0]:.3f} s</div>
                     </div>
                     <div class="param-item">
                         <div class="param-name">Inertia (I₁₁)</div>
@@ -864,37 +917,6 @@ def generate_html_report(
         <p>Quadrotor Tracking Simulation • Python Implementation</p>
         <p>Original MATLAB code by Team C</p>
     </footer>
-    
-    <script>
-        // Auto-play animation on page load and loop it
-        document.addEventListener('DOMContentLoaded', function() {{
-            // Find the animation plot div (it's the first plotly plot)
-            setTimeout(function() {{
-                const plots = document.querySelectorAll('.js-plotly-plot');
-                if (plots.length > 0) {{
-                    const animPlot = plots[0];
-                    
-                    // Function to play animation
-                    function playAnimation() {{
-                        Plotly.animate(animPlot, null, {{
-                            frame: {{duration: 50, redraw: true}},
-                            fromcurrent: false,
-                            mode: 'immediate',
-                            transition: {{duration: 0}}
-                        }});
-                    }}
-                    
-                    // Play on load
-                    playAnimation();
-                    
-                    // Loop: restart when animation ends
-                    animPlot.on('plotly_animated', function() {{
-                        setTimeout(playAnimation, 1000);  // 1 second pause before restart
-                    }});
-                }}
-            }}, 500);
-        }});
-    </script>
 </body>
 </html>'''
     
