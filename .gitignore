@@ -9,6 +9,9 @@ python/simulation_report.html
 # MATLAB
 *.asv
 
+#HTML
+*.html
+
 # User-specific files
 *.rsuser
 *.suo

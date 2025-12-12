@@ -16,6 +16,10 @@ classdef uav < handle
         shape
     end
 
+    properties(Access=private)
+        zero_dist = struct("r", @(t,z) [0; 0; 0], "n", @(t,z) [0; 0; 0]);
+    end
+
     properties(Access=public) % Visualization and plotting parameters and handles
         animation_axis = [];
     end
@@ -45,19 +49,27 @@ classdef uav < handle
                     end
                 end
             else
-                y = z;
+                if length(t) < 2
+                    y = z(1:3);
+                else
+                    y = z(:, 1:3);
+                end
             end
         end
 
         function dist = disturbance(obj, iscaptured)
             if iscaptured == false
-                dist = struct("r", @(t,z) obj.zero(t), ...
-                    "n", @(t,z) obj.zero(t));
+                dist = obj.zero_dist;
             else
                 dist = obj.disturbance_fcn;
             end
         end
 
+        function y = eval(~,f,t,z)
+            for k=1:length(t)
+                y(k,:) = f(t(k),z(k,:))';
+            end
+        end
     end
 
     methods(Access=private)
@@ -68,6 +80,8 @@ classdef uav < handle
                 z = zeros(length(t),3);
             end
         end
+
+        
     end
 
     methods(Access=public) % Visualization and plotting functions
