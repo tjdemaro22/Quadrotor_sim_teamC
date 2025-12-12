@@ -18,10 +18,10 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-from quadrotor import Quadrotor
-from uav import UAV
-from controller import SACController
-from simulator import Simulator
+from src.quadrotor import Quadrotor
+from src.uav import UAV
+from src.controller import SACController
+from src.simulator import Simulator
 
 
 def circular_path(t: float) -> np.ndarray:
