@@ -11,7 +11,238 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple, List
+
+
+# =============================================================================
+# Quadrotor Geometry Helper Functions
+# =============================================================================
+
+def rotx(phi: float) -> np.ndarray:
+    """Rotation matrix about x-axis."""
+    return np.array([
+        [1, 0, 0],
+        [0, np.cos(phi), -np.sin(phi)],
+        [0, np.sin(phi), np.cos(phi)]
+    ])
+
+
+def roty(theta: float) -> np.ndarray:
+    """Rotation matrix about y-axis."""
+    return np.array([
+        [np.cos(theta), 0, np.sin(theta)],
+        [0, 1, 0],
+        [-np.sin(theta), 0, np.cos(theta)]
+    ])
+
+
+def rotz(psi: float) -> np.ndarray:
+    """Rotation matrix about z-axis."""
+    return np.array([
+        [np.cos(psi), -np.sin(psi), 0],
+        [np.sin(psi), np.cos(psi), 0],
+        [0, 0, 1]
+    ])
+
+
+def rotation_matrix(phi: float, theta: float, psi: float) -> np.ndarray:
+    """Compute rotation matrix from body frame to world frame (ZYX Euler)."""
+    return rotz(psi) @ roty(theta) @ rotx(phi)
+
+
+def generate_rotor_points(l: float, rotor_scale: float = 0.3, n_points: int = 20) -> np.ndarray:
+    """
+    Generate points for a single rotor circle in the body frame.
+    
+    Args:
+        l: Arm length from center to rotor
+        rotor_scale: Scale factor for rotor radius relative to arm length
+        n_points: Number of points to generate for the circle
+        
+    Returns:
+        Array of shape (n_points, 3) with rotor circle points
+    """
+    Q = np.linspace(0, 2 * np.pi, n_points)
+    radius = rotor_scale * l
+    return np.column_stack([radius * np.cos(Q), radius * np.sin(Q), np.zeros(n_points)])
+
+
+def generate_chassis_points(l: float) -> np.ndarray:
+    """
+    Generate the 4 rotor center positions in the body frame.
+    
+    Rotor layout (top view):
+             O u1 (rotor 0, +x)
+             |
+       u2 O--|--O u4 (rotor 1: +y, rotor 3: -y)
+             |
+             O u3 (rotor 2, -x)
+    
+    Args:
+        l: Arm length from center to each rotor
+        
+    Returns:
+        Array of shape (4, 3) with rotor center positions
+    """
+    return l * np.array([
+        [1, 0, 0],   # Rotor 0 (u1): front (+x)
+        [0, 1, 0],   # Rotor 1 (u2): left (+y)
+        [-1, 0, 0],  # Rotor 2 (u3): back (-x)
+        [0, -1, 0]   # Rotor 3 (u4): right (-y)
+    ])
+
+
+def get_quadrotor_geometry(
+    pos: np.ndarray,
+    phi: float,
+    theta: float,
+    psi: float,
+    l: float,
+    rotor_scale: float = 0.3
+) -> Tuple[List[np.ndarray], np.ndarray, np.ndarray]:
+    """
+    Compute world-frame quadrotor geometry for visualization.
+    
+    Args:
+        pos: Position [x, y, z] in world frame
+        phi, theta, psi: Euler angles (roll, pitch, yaw)
+        l: Arm length
+        rotor_scale: Scale factor for rotor radius
+        
+    Returns:
+        rotors_world: List of 4 arrays, each (n_points, 3) for rotor circles
+        chassis_world: Array of shape (4, 3) with rotor center positions
+        thrust_dir: Array of shape (3,) with thrust direction (body +z in world frame)
+    """
+    R = rotation_matrix(phi, theta, psi)
+    
+    # Generate base geometry
+    rotor_points = generate_rotor_points(l, rotor_scale)
+    chassis_points = generate_chassis_points(l)
+    
+    # Transform chassis points to world frame
+    chassis_world = pos + chassis_points @ R.T
+    
+    # Transform rotor circles to world frame (centered at each rotor position)
+    rotor_world = rotor_points @ R.T
+    rotors_world = [rotor_world + chassis_world[i] for i in range(4)]
+    
+    # Thrust direction is body +z transformed to world frame
+    thrust_dir = R @ np.array([0, 0, 1])
+    
+    return rotors_world, chassis_world, thrust_dir
+
+
+def create_quadrotor_traces(
+    pos: np.ndarray,
+    phi: float,
+    theta: float,
+    psi: float,
+    l: float,
+    color: str = '#1f77b4',
+    rotor_scale: float = 0.3
+) -> List[go.Scatter3d]:
+    """
+    Create Plotly traces for quadrotor visualization.
+    
+    Args:
+        pos: Position [x, y, z]
+        phi, theta, psi: Euler angles
+        l: Arm length
+        color: Color for the quadrotor
+        rotor_scale: Scale factor for rotor radius
+        
+    Returns:
+        List of Scatter3d traces (4 rotors + 1 chassis)
+    """
+    rotors, chassis, _ = get_quadrotor_geometry(pos, phi, theta, psi, l, rotor_scale)
+    
+    traces = []
+    
+    # Add rotor traces
+    for i, rotor in enumerate(rotors):
+        traces.append(go.Scatter3d(
+            x=rotor[:, 0].tolist(),
+            y=rotor[:, 1].tolist(),
+            z=rotor[:, 2].tolist(),
+            mode='lines',
+            line=dict(color=color, width=4),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+    
+    # Add chassis trace (X-shape connecting opposite rotors)
+    # Connect rotor 0-2 (front-back) and rotor 1-3 (left-right) with NaN separator
+    chassis_x = [chassis[0, 0], chassis[2, 0], None, chassis[1, 0], chassis[3, 0]]
+    chassis_y = [chassis[0, 1], chassis[2, 1], None, chassis[1, 1], chassis[3, 1]]
+    chassis_z = [chassis[0, 2], chassis[2, 2], None, chassis[1, 2], chassis[3, 2]]
+    
+    traces.append(go.Scatter3d(
+        x=chassis_x,
+        y=chassis_y,
+        z=chassis_z,
+        mode='lines',
+        line=dict(color=color, width=5),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+    
+    return traces
+
+
+def create_thrust_arrow_traces(
+    pos: np.ndarray,
+    phi: float,
+    theta: float,
+    psi: float,
+    thrusts: np.ndarray,
+    l: float,
+    thrust_scale: float = 0.1,
+    rotor_scale: float = 0.3
+) -> List[go.Cone]:
+    """
+    Create Plotly Cone traces for thrust arrow visualization.
+    
+    Args:
+        pos: Position [x, y, z]
+        phi, theta, psi: Euler angles
+        thrusts: Array of 4 thrust values [u1, u2, u3, u4]
+        l: Arm length
+        thrust_scale: Scale factor to convert thrust to arrow length
+        rotor_scale: Scale factor for rotor radius
+        
+    Returns:
+        List of Cone traces (one per rotor)
+    """
+    _, chassis, thrust_dir = get_quadrotor_geometry(pos, phi, theta, psi, l, rotor_scale)
+    
+    # Colors for each rotor (matching the control input plot)
+    rotor_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+    rotor_names = ['u1 (Front)', 'u2 (Left)', 'u3 (Back)', 'u4 (Right)']
+    
+    traces = []
+    for i in range(4):
+        thrust_mag = thrusts[i] * thrust_scale
+        
+        # Arrow points from rotor center in thrust direction
+        traces.append(go.Cone(
+            x=[chassis[i, 0]],
+            y=[chassis[i, 1]],
+            z=[chassis[i, 2]],
+            u=[thrust_dir[0] * thrust_mag],
+            v=[thrust_dir[1] * thrust_mag],
+            w=[thrust_dir[2] * thrust_mag],
+            colorscale=[[0, rotor_colors[i]], [1, rotor_colors[i]]],
+            showscale=False,
+            sizemode='absolute',
+            sizeref=0.15,
+            anchor='tail',
+            name=rotor_names[i],
+            showlegend=False,
+            hovertemplate=f'<b>{rotor_names[i]}</b><br>Thrust: {thrusts[i]:.2f} N<extra></extra>'
+        ))
+    
+    return traces
 
 
 def generate_html_report(
@@ -91,28 +322,36 @@ def generate_html_report(
     n_frames = min(200, len(t))
     frame_indices = np.linspace(0, len(t) - 1, n_frames, dtype=int)
     
+    # Get quadrotor parameters for visualization
+    arm_length = quadrotor.l
+    rotor_scale = 0.3  # Match MATLAB visualization
+    quad_color = '#1f77b4'
+    
+    # Get initial state for quadrotor shape
+    init_pos = np.array([quad_x[0], quad_y[0], quad_z[0]])
+    init_phi, init_theta, init_psi = z[0, 3], z[0, 4], z[0, 5]
+    
     # Create base figure with initial positions
     fig_anim = go.Figure()
     
-    # Quadrotor trail (will be updated in frames)
+    # Trace 0: Quadrotor trail (will be updated in frames)
     fig_anim.add_trace(go.Scatter3d(
         x=quad_x[:1], y=quad_y[:1], z=quad_z[:1],
         mode='lines',
         name='Quadrotor Trail',
-        line=dict(color='#1f77b4', width=4),
+        line=dict(color=quad_color, width=4),
         showlegend=False
     ))
     
-    # Quadrotor current position marker
-    fig_anim.add_trace(go.Scatter3d(
-        x=[quad_x[0]], y=[quad_y[0]], z=[quad_z[0]],
-        mode='markers',
-        name='Quadrotor',
-        marker=dict(color='#1f77b4', size=10, symbol='diamond'),
-        showlegend=False
-    ))
+    # Traces 1-5: Quadrotor shape (4 rotors + 1 chassis)
+    quad_traces = create_quadrotor_traces(
+        init_pos, init_phi, init_theta, init_psi,
+        arm_length, quad_color, rotor_scale
+    )
+    for trace in quad_traces:
+        fig_anim.add_trace(trace)
     
-    # UAV trail (will be updated in frames)
+    # Trace 6: UAV trail (will be updated in frames)
     fig_anim.add_trace(go.Scatter3d(
         x=uav_x[:1], y=uav_y[:1], z=uav_z[:1],
         mode='lines',
@@ -121,7 +360,7 @@ def generate_html_report(
         showlegend=False
     ))
     
-    # UAV current position marker
+    # Trace 7: UAV current position marker
     fig_anim.add_trace(go.Scatter3d(
         x=[uav_x[0]], y=[uav_y[0]], z=[uav_z[0]],
         mode='markers',
@@ -134,35 +373,47 @@ def generate_html_report(
     frames = []
     for i, idx in enumerate(frame_indices):
         idx = int(idx)
+        
+        # Get quadrotor state at this frame
+        frame_pos = np.array([quad_x[idx], quad_y[idx], quad_z[idx]])
+        frame_phi, frame_theta, frame_psi = z[idx, 3], z[idx, 4], z[idx, 5]
+        
+        # Generate quadrotor traces for this frame
+        frame_quad_traces = create_quadrotor_traces(
+            frame_pos, frame_phi, frame_theta, frame_psi,
+            arm_length, quad_color, rotor_scale
+        )
+        
+        frame_data = [
+            # Trace 0: Quadrotor trail
+            go.Scatter3d(
+                x=quad_x[:idx+1], y=quad_y[:idx+1], z=quad_z[:idx+1],
+                mode='lines',
+                line=dict(color=quad_color, width=4)
+            ),
+        ]
+        
+        # Traces 1-5: Quadrotor shape
+        frame_data.extend(frame_quad_traces)
+        
+        # Trace 6: UAV trail
+        frame_data.append(go.Scatter3d(
+            x=uav_x[:idx+1], y=uav_y[:idx+1], z=uav_z[:idx+1],
+            mode='lines',
+            line=dict(color='#d62728', width=4)
+        ))
+        
+        # Trace 7: UAV position
+        frame_data.append(go.Scatter3d(
+            x=[uav_x[idx]], y=[uav_y[idx]], z=[uav_z[idx]],
+            mode='markers',
+            marker=dict(color='#d62728', size=12, symbol='circle')
+        ))
+        
         frame = go.Frame(
-            data=[
-                # Quadrotor trail
-                go.Scatter3d(
-                    x=quad_x[:idx+1], y=quad_y[:idx+1], z=quad_z[:idx+1],
-                    mode='lines',
-                    line=dict(color='#1f77b4', width=4)
-                ),
-                # Quadrotor position
-                go.Scatter3d(
-                    x=[quad_x[idx]], y=[quad_y[idx]], z=[quad_z[idx]],
-                    mode='markers',
-                    marker=dict(color='#1f77b4', size=10, symbol='diamond')
-                ),
-                # UAV trail
-                go.Scatter3d(
-                    x=uav_x[:idx+1], y=uav_y[:idx+1], z=uav_z[:idx+1],
-                    mode='lines',
-                    line=dict(color='#d62728', width=4)
-                ),
-                # UAV position
-                go.Scatter3d(
-                    x=[uav_x[idx]], y=[uav_y[idx]], z=[uav_z[idx]],
-                    mode='markers',
-                    marker=dict(color='#d62728', size=12, symbol='circle')
-                )
-            ],
+            data=frame_data,
             name=f'frame{i}',
-            traces=[0, 1, 2, 3]
+            traces=[0, 1, 2, 3, 4, 5, 6, 7]  # Update all 8 traces
         )
         frames.append(frame)
     
@@ -344,6 +595,149 @@ def generate_html_report(
     )
     
     # =========================================================================
+    # Create Thrust Visualization Animation (Debug)
+    # =========================================================================
+    
+    # Calculate thrust scale based on max thrust for good arrow visibility
+    max_thrust = max(max(u1), max(u2), max(u3), max(u4))
+    thrust_scale = 0.3 / max(max_thrust, 0.1)  # Normalize arrows to reasonable size
+    
+    # Create base figure for thrust visualization
+    fig_thrust = go.Figure()
+    
+    # Add initial quadrotor shape traces (4 rotors + 1 chassis = 5 traces)
+    init_quad_traces = create_quadrotor_traces(
+        init_pos, init_phi, init_theta, init_psi,
+        arm_length, quad_color, rotor_scale
+    )
+    for trace in init_quad_traces:
+        fig_thrust.add_trace(trace)
+    
+    # Add initial thrust arrow traces (4 cones)
+    init_thrusts = np.array([u1[0], u2[0], u3[0], u4[0]])
+    init_thrust_traces = create_thrust_arrow_traces(
+        init_pos, init_phi, init_theta, init_psi,
+        init_thrusts, arm_length, thrust_scale, rotor_scale
+    )
+    for trace in init_thrust_traces:
+        fig_thrust.add_trace(trace)
+    
+    # Create animation frames for thrust visualization
+    thrust_frames = []
+    for i, idx in enumerate(frame_indices):
+        idx = int(idx)
+        
+        # Get quadrotor state at this frame
+        frame_pos = np.array([quad_x[idx], quad_y[idx], quad_z[idx]])
+        frame_phi, frame_theta, frame_psi = z[idx, 3], z[idx, 4], z[idx, 5]
+        frame_thrusts = np.array([u1[idx], u2[idx], u3[idx], u4[idx]])
+        
+        # Generate quadrotor shape traces
+        frame_quad_traces = create_quadrotor_traces(
+            frame_pos, frame_phi, frame_theta, frame_psi,
+            arm_length, quad_color, rotor_scale
+        )
+        
+        # Generate thrust arrow traces
+        frame_thrust_traces = create_thrust_arrow_traces(
+            frame_pos, frame_phi, frame_theta, frame_psi,
+            frame_thrusts, arm_length, thrust_scale, rotor_scale
+        )
+        
+        frame_data = frame_quad_traces + frame_thrust_traces
+        
+        thrust_frame = go.Frame(
+            data=frame_data,
+            name=f'thrust_frame{i}',
+            traces=[0, 1, 2, 3, 4, 5, 6, 7, 8]  # 5 quad traces + 4 thrust cones
+        )
+        thrust_frames.append(thrust_frame)
+    
+    fig_thrust.frames = thrust_frames
+    
+    # Create slider steps for thrust animation
+    thrust_slider_steps = []
+    for i, idx in enumerate(frame_indices):
+        step = dict(
+            args=[[f'thrust_frame{i}'], dict(
+                frame=dict(duration=0, redraw=True),
+                mode='immediate',
+                transition=dict(duration=0)
+            )],
+            label=f'{t[idx]:.1f}',
+            method='animate'
+        )
+        thrust_slider_steps.append(step)
+    
+    # Add layout with play/pause buttons and slider
+    fig_thrust.update_layout(
+        title=dict(text='Thrust Visualization (Debug)', font=dict(size=16)),
+        scene=dict(
+            xaxis=dict(title='X (m)', range=x_range),
+            yaxis=dict(title='Y (m)', range=y_range),
+            zaxis=dict(title='Z (m)', range=z_range),
+            aspectmode='cube',
+            camera=dict(
+                up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0),
+                eye=dict(x=1.5, y=1.5, z=1.0)
+            )
+        ),
+        showlegend=False,
+        updatemenus=[
+            dict(
+                type='buttons',
+                showactive=True,
+                y=0,
+                x=0.1,
+                xanchor='right',
+                yanchor='top',
+                buttons=[
+                    dict(
+                        label='▶ Play',
+                        method='animate',
+                        args=[None, dict(
+                            frame=dict(duration=50, redraw=True),
+                            fromcurrent=True,
+                            mode='immediate',
+                            transition=dict(duration=0)
+                        )]
+                    ),
+                    dict(
+                        label='⏸ Pause',
+                        method='animate',
+                        args=[[None], dict(
+                            frame=dict(duration=0, redraw=False),
+                            mode='immediate',
+                            transition=dict(duration=0)
+                        )]
+                    )
+                ]
+            )
+        ],
+        sliders=[dict(
+            active=0,
+            yanchor='top',
+            xanchor='left',
+            currentvalue=dict(
+                font=dict(size=12),
+                prefix='Time (s): ',
+                visible=True,
+                xanchor='right'
+            ),
+            transition=dict(duration=0),
+            pad=dict(b=10, t=50),
+            len=0.9,
+            x=0.1,
+            y=0,
+            steps=thrust_slider_steps[::max(1, len(thrust_slider_steps)//25)]
+        )],
+        width=1100,
+        height=600,
+        margin=dict(l=0, r=0, b=60, t=50)
+    )
+    
+    # =========================================================================
     # Create State Plots
     # =========================================================================
     fig_states = make_subplots(
@@ -500,6 +894,7 @@ def generate_html_report(
     # Convert plots to HTML
     plot_anim_html = fig_anim.to_html(full_html=False, include_plotlyjs=False)
     plot_3d_html = fig_3d.to_html(full_html=False, include_plotlyjs=False)
+    plot_thrust_html = fig_thrust.to_html(full_html=False, include_plotlyjs=False)
     plot_states_html = fig_states.to_html(full_html=False, include_plotlyjs=False)
     plot_control_html = fig_control.to_html(full_html=False, include_plotlyjs=False)
     plot_distance_html = fig_distance.to_html(full_html=False, include_plotlyjs=False)
@@ -812,6 +1207,27 @@ def generate_html_report(
                     <span style="color: #1f77b4;">●</span> Quadrotor (Blue) | <span style="color: #d62728;">●</span> Target UAV (Red)
                     <br>
                     <em>Tip: Pause the animation to rotate/zoom the 3D view</em>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Thrust Visualization (Debug) -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-icon orange">🔥</div>
+                <h2>Thrust Visualization (Debug)</h2>
+            </div>
+            <div class="section-content">
+                <div class="plot-container">
+                    {plot_thrust_html}
+                </div>
+                <div class="axis-info">
+                    Arrows show rotor thrust magnitude and direction (perpendicular to rotor disc, tilting with quadrotor)
+                    <br>
+                    <span style="color: #1f77b4;">▲</span> u1 (Front) | 
+                    <span style="color: #ff7f0e;">▲</span> u2 (Left) | 
+                    <span style="color: #2ca02c;">▲</span> u3 (Back) | 
+                    <span style="color: #d62728;">▲</span> u4 (Right)
                 </div>
             </div>
         </div>
