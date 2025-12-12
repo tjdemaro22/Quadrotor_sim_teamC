@@ -197,22 +197,25 @@ def create_thrust_arrow_traces(
     psi: float,
     thrusts: np.ndarray,
     l: float,
+    mu: float,
     thrust_scale: float = 0.1,
     rotor_scale: float = 0.3
-) -> List[go.Cone]:
+) -> List[go.Scatter3d]:
     """
-    Create Plotly Cone traces for thrust arrow visualization.
+    Create Plotly Scatter3d traces for thrust arrow visualization.
+    Uses lines with small arrowheads for better magnitude visibility.
     
     Args:
         pos: Position [x, y, z]
         phi, theta, psi: Euler angles
-        thrusts: Array of 4 thrust values [u1, u2, u3, u4]
+        thrusts: Array of 4 thrust values [u1, u2, u3, u4] (will be saturated)
         l: Arm length
+        mu: Maximum thrust (for saturation)
         thrust_scale: Scale factor to convert thrust to arrow length
         rotor_scale: Scale factor for rotor radius
         
     Returns:
-        List of Cone traces (one per rotor)
+        List of Scatter3d traces (line + arrowhead per rotor)
     """
     _, chassis, thrust_dir = get_quadrotor_geometry(pos, phi, theta, psi, l, rotor_scale)
     
@@ -220,27 +223,59 @@ def create_thrust_arrow_traces(
     rotor_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
     rotor_names = ['u1 (Front)', 'u2 (Left)', 'u3 (Back)', 'u4 (Right)']
     
+    # Saturate thrust values between 0 and mu
+    saturated_thrusts = np.clip(thrusts, 0, mu)
+    
     traces = []
     for i in range(4):
-        thrust_mag = thrusts[i] * thrust_scale
+        thrust_mag = saturated_thrusts[i] * thrust_scale
         
-        # Arrow points from rotor center in thrust direction
-        traces.append(go.Cone(
-            x=[chassis[i, 0]],
-            y=[chassis[i, 1]],
-            z=[chassis[i, 2]],
-            u=[thrust_dir[0] * thrust_mag],
-            v=[thrust_dir[1] * thrust_mag],
-            w=[thrust_dir[2] * thrust_mag],
-            colorscale=[[0, rotor_colors[i]], [1, rotor_colors[i]]],
-            showscale=False,
-            sizemode='absolute',
-            sizeref=0.15,
-            anchor='tail',
-            name=rotor_names[i],
+        # Arrow shaft: line from rotor center in thrust direction
+        start = chassis[i]
+        end = start + thrust_dir * thrust_mag
+        
+        # Create line trace for the arrow shaft
+        traces.append(go.Scatter3d(
+            x=[start[0], end[0]],
+            y=[start[1], end[1]],
+            z=[start[2], end[2]],
+            mode='lines',
+            line=dict(color=rotor_colors[i], width=6),
             showlegend=False,
-            hovertemplate=f'<b>{rotor_names[i]}</b><br>Thrust: {thrusts[i]:.2f} N<extra></extra>'
+            hovertemplate=f'<b>{rotor_names[i]}</b><br>Thrust: {saturated_thrusts[i]:.2f} N<extra></extra>'
         ))
+    
+    # Add small cone arrowheads at the tips
+    for i in range(4):
+        thrust_mag = saturated_thrusts[i] * thrust_scale
+        start = chassis[i]
+        end = start + thrust_dir * thrust_mag
+        
+        # Small cone at the tip (only if thrust > 0)
+        if saturated_thrusts[i] > 0.01:
+            traces.append(go.Cone(
+                x=[end[0]],
+                y=[end[1]],
+                z=[end[2]],
+                u=[thrust_dir[0] * 0.05],
+                v=[thrust_dir[1] * 0.05],
+                w=[thrust_dir[2] * 0.05],
+                colorscale=[[0, rotor_colors[i]], [1, rotor_colors[i]]],
+                showscale=False,
+                sizemode='absolute',
+                sizeref=0.08,
+                anchor='tail',
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        else:
+            # Placeholder empty trace to maintain trace count
+            traces.append(go.Scatter3d(
+                x=[], y=[], z=[],
+                mode='markers',
+                showlegend=False,
+                hoverinfo='skip'
+            ))
     
     return traces
 
@@ -324,7 +359,9 @@ def generate_html_report(
     
     # Get quadrotor parameters for visualization
     arm_length = quadrotor.l
-    rotor_scale = 0.3  # Match MATLAB visualization
+    # Scale up rotor visualization for better visibility in plots
+    # With l=0.2m, this gives rotors with radius 0.2m (total quadrotor span ~0.8m)
+    rotor_scale = 1.0  # Increased from 0.3 for better visibility
     quad_color = '#1f77b4'
     
     # Get initial state for quadrotor shape
@@ -598,12 +635,33 @@ def generate_html_report(
     # Create Thrust Visualization Animation (Debug)
     # =========================================================================
     
+    # Get max thrust (mu) for saturation
+    mu = quadrotor.mu
+    
     # Calculate thrust scale based on max thrust for good arrow visibility
-    max_thrust = max(max(u1), max(u2), max(u3), max(u4))
-    thrust_scale = 0.3 / max(max_thrust, 0.1)  # Normalize arrows to reasonable size
+    # Make arrows longer for better visibility (scale up by factor of 2)
+    thrust_scale = 0.6 / max(mu, 0.1)  # Normalize arrows to reasonable size
+    
+    # Calculate tight auto-zoom bounds around quadrotor and target
+    # Find max distance between quadrotor and target across all frames
+    max_dist_between = 0.0
+    for idx in range(len(quad_x)):
+        dist = np.sqrt((quad_x[idx] - uav_x[idx])**2 + 
+                       (quad_y[idx] - uav_y[idx])**2 + 
+                       (quad_z[idx] - uav_z[idx])**2)
+        max_dist_between = max(max_dist_between, dist)
+    
+    # Zoom radius: half the max distance plus padding for quadrotor size and visibility
+    # Add arm_length * 2 for quadrotor size, plus small margin
+    zoom_radius = max(max_dist_between / 2 + arm_length * 3, 1.0)
     
     # Create base figure for thrust visualization
     fig_thrust = go.Figure()
+    
+    # Trace indices:
+    # 0-4: Quadrotor (4 rotors + 1 chassis)
+    # 5-12: Thrust arrows (4 lines + 4 cones)
+    # 13: Target UAV marker
     
     # Add initial quadrotor shape traces (4 rotors + 1 chassis = 5 traces)
     init_quad_traces = create_quadrotor_traces(
@@ -613,14 +671,30 @@ def generate_html_report(
     for trace in init_quad_traces:
         fig_thrust.add_trace(trace)
     
-    # Add initial thrust arrow traces (4 cones)
+    # Add initial thrust arrow traces (4 lines + 4 cones = 8 traces)
     init_thrusts = np.array([u1[0], u2[0], u3[0], u4[0]])
     init_thrust_traces = create_thrust_arrow_traces(
         init_pos, init_phi, init_theta, init_psi,
-        init_thrusts, arm_length, thrust_scale, rotor_scale
+        init_thrusts, arm_length, mu, thrust_scale, rotor_scale
     )
     for trace in init_thrust_traces:
         fig_thrust.add_trace(trace)
+    
+    # Add target UAV marker (trace 13) - size proportional to quadrotor
+    # Target marker size in pixels; make it visible but smaller than quadrotor
+    target_marker_size = 15
+    fig_thrust.add_trace(go.Scatter3d(
+        x=[uav_x[0]], y=[uav_y[0]], z=[uav_z[0]],
+        mode='markers',
+        name='Target UAV',
+        marker=dict(color='#d62728', size=target_marker_size, symbol='circle'),
+        showlegend=False,
+        hovertemplate='<b>Target UAV</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>'
+    ))
+    
+    # Calculate initial center point between quadrotor and target
+    init_target_pos = np.array([uav_x[0], uav_y[0], uav_z[0]])
+    init_center = (init_pos + init_target_pos) / 2
     
     # Create animation frames for thrust visualization
     thrust_frames = []
@@ -631,6 +705,7 @@ def generate_html_report(
         frame_pos = np.array([quad_x[idx], quad_y[idx], quad_z[idx]])
         frame_phi, frame_theta, frame_psi = z[idx, 3], z[idx, 4], z[idx, 5]
         frame_thrusts = np.array([u1[idx], u2[idx], u3[idx], u4[idx]])
+        frame_target_pos = np.array([uav_x[idx], uav_y[idx], uav_z[idx]])
         
         # Generate quadrotor shape traces
         frame_quad_traces = create_quadrotor_traces(
@@ -638,18 +713,27 @@ def generate_html_report(
             arm_length, quad_color, rotor_scale
         )
         
-        # Generate thrust arrow traces
+        # Generate thrust arrow traces (now with mu for saturation)
         frame_thrust_traces = create_thrust_arrow_traces(
             frame_pos, frame_phi, frame_theta, frame_psi,
-            frame_thrusts, arm_length, thrust_scale, rotor_scale
+            frame_thrusts, arm_length, mu, thrust_scale, rotor_scale
         )
         
-        frame_data = frame_quad_traces + frame_thrust_traces
+        # Generate target UAV marker trace
+        target_trace = go.Scatter3d(
+            x=[frame_target_pos[0]], y=[frame_target_pos[1]], z=[frame_target_pos[2]],
+            mode='markers',
+            marker=dict(color='#d62728', size=target_marker_size, symbol='circle'),
+            showlegend=False,
+            hovertemplate='<b>Target UAV</b><br>x: %{x:.2f}<br>y: %{y:.2f}<br>z: %{z:.2f}<extra></extra>'
+        )
+        
+        frame_data = frame_quad_traces + frame_thrust_traces + [target_trace]
         
         thrust_frame = go.Frame(
             data=frame_data,
             name=f'thrust_frame{i}',
-            traces=[0, 1, 2, 3, 4, 5, 6, 7, 8]  # 5 quad traces + 4 thrust cones
+            traces=list(range(14))  # 5 quad + 8 thrust arrows + 1 target = 14 traces
         )
         thrust_frames.append(thrust_frame)
     
@@ -669,13 +753,23 @@ def generate_html_report(
         )
         thrust_slider_steps.append(step)
     
+    # Calculate tight zoom bounds centered on the midpoint of quadrotor and target trajectories
+    # This provides a view that encompasses both objects throughout the simulation
+    center_x = (np.mean(quad_x) + np.mean(uav_x)) / 2
+    center_y = (np.mean(quad_y) + np.mean(uav_y)) / 2
+    center_z = (np.mean(quad_z) + np.mean(uav_z)) / 2
+    
+    thrust_x_range = [center_x - zoom_radius, center_x + zoom_radius]
+    thrust_y_range = [center_y - zoom_radius, center_y + zoom_radius]
+    thrust_z_range = [max(0, center_z - zoom_radius), center_z + zoom_radius]
+    
     # Add layout with play/pause buttons and slider
     fig_thrust.update_layout(
         title=dict(text='Thrust Visualization (Debug)', font=dict(size=16)),
         scene=dict(
-            xaxis=dict(title='X (m)', range=x_range),
-            yaxis=dict(title='Y (m)', range=y_range),
-            zaxis=dict(title='Z (m)', range=z_range),
+            xaxis=dict(title='X (m)', range=thrust_x_range),
+            yaxis=dict(title='Y (m)', range=thrust_y_range),
+            zaxis=dict(title='Z (m)', range=thrust_z_range),
             aspectmode='cube',
             camera=dict(
                 up=dict(x=0, y=0, z=1),

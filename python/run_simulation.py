@@ -6,7 +6,7 @@ This script runs a simulation of a quadrotor tracking a target UAV.
 Equivalent to the MATLAB demaro_test_sim.m script.
 
 Usage:
-    python run_simulation.py [--no-animation] [--save-gif] [--html-report]
+    python run_simulation.py [--no-figures] [--save-gif] [--html-report]
 """
 
 import argparse
@@ -87,7 +87,8 @@ def sinusoidal_path(t: float) -> np.ndarray:
 
 def main():
     parser = argparse.ArgumentParser(description='Quadrotor Tracking Simulation')
-    parser.add_argument('--no-animation', action='store_true', help='Skip animation, show static plot')
+    parser.add_argument('--no-figures', action='store_true', 
+                        help='Suppress all matplotlib figures (animation, plots)')
     parser.add_argument('--save-gif', action='store_true', help='Save animation as GIF')
     parser.add_argument('--html-report', action='store_true', help='Generate HTML report')
     parser.add_argument('--trajectory', type=str, default='circular',
@@ -187,35 +188,40 @@ def main():
         report_path = generate_html_report(t, z, u, d, y, quad, args.trajectory)
         print(f"  HTML report saved to: {report_path}")
     
-    if args.no_animation:
-        print("\nShowing static 3D plot...")
-        sim.plot_static_3d(z, y, show=True)
-    else:
-        print("\nStarting animation...")
-        print("  (Close the window to continue)")
+    # Skip all matplotlib figures if --no-figures is set
+    if not args.no_figures:
+        # Run animation or show static 3D plot
+        if args.save_gif:
+            print("\nSaving animation as GIF...")
+            save_path = 'quadrotor_simulation.gif'
+            sim.animate(t, z, y, interval=20, save_path=save_path, show=False)
+            print(f"  Animation saved to: {save_path}")
+        else:
+            print("\nStarting animation...")
+            print("  (Close the window to continue)")
+            sim.animate(t, z, y, interval=20, save_path=None, show=True)
         
-        save_path = 'quadrotor_simulation.gif' if args.save_gif else None
-        sim.animate(t, z, y, interval=20, save_path=save_path, show=True)
-    
-    # Plot states
-    print("\nPlotting state history...")
-    fig_states = quad.plot_states(t, z)
-    
-    # Plot control inputs
-    print("Plotting control inputs...")
-    fig_ctrl = plt.figure(figsize=(10, 6))
-    uvec = np.array(ctrl.uvec)
-    plt.plot(uvec[:, 0], label='u1')
-    plt.plot(uvec[:, 1], label='u2')
-    plt.plot(uvec[:, 2], label='u3')
-    plt.plot(uvec[:, 3], label='u4')
-    plt.xlabel('Time Step')
-    plt.ylabel('Rotor Thrust (N)')
-    plt.title('Control Inputs')
-    plt.legend()
-    plt.grid(True)
-    
-    plt.show()
+        # Plot states
+        print("\nPlotting state history...")
+        fig_states = quad.plot_states(t, z)
+        
+        # Plot control inputs
+        print("Plotting control inputs...")
+        fig_ctrl = plt.figure(figsize=(10, 6))
+        uvec = np.array(ctrl.uvec)
+        plt.plot(uvec[:, 0], label='u1')
+        plt.plot(uvec[:, 1], label='u2')
+        plt.plot(uvec[:, 2], label='u3')
+        plt.plot(uvec[:, 3], label='u4')
+        plt.xlabel('Time Step')
+        plt.ylabel('Rotor Thrust (N)')
+        plt.title('Control Inputs')
+        plt.legend()
+        plt.grid(True)
+        
+        plt.show()
+    else:
+        print("\nFigures suppressed (--no-figures flag set)")
     
     print("\nSimulation complete!")
     return t, z, u, d, y
